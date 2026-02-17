@@ -1,28 +1,19 @@
 """
-Experiment 3: Unified Prompt for All Tool Types (Proposed Solution)
+Experiment 1 (Baseline): Default Prompts for All Tool Types
 
-This experiment uses a single unified prompt (UNIFIED_TOOL_RESPONSE_GENERATION_PROMPT)
-that handles Function, MCP, and API tools with comprehensive validation rules and
-format guidance for all tool types.
+This experiment establishes the baseline using default FUNCTION_TOOL_RESPONSE_GENERATION_PROMPT
+for all tool types (function, MCP, API). Each test case now includes its own output schema
+via the mandatory output_schema parameter in the tool decorator.
 
 Expected Behavior:
-- Uses unified prompt with tool-type-specific guidance sections
+- Uses default FUNCTION_TOOL_RESPONSE_GENERATION_PROMPT for all tools
 - Output schemas are defined per-tool in test cases
-- May improve function tool responses with enhanced validation rules
-- Could slightly reduce MCP/API performance vs dedicated prompts (Exp 2) but should be tolerable
-- Simplifies maintenance with single prompt template
-
-Trade-off Analysis:
-- Pro: Single prompt easier to maintain and update
-- Pro: May improve function tools with better validation guidance
-- Con: May be slightly less optimized for MCP/API vs dedicated prompts
-- Goal: Find acceptable middle ground that improves overall quality
-
-Note: Requires updated tool_simulator.py to support custom prompts and MCP/API types.
+- Works for function, MCP, and API tools
+- Higher chance of format mismatches for MCP/API without tailored prompts
 """
 
 from strands_evals.simulation.prompt_templates.tool_response_generation import (
-    UNIFIED_TOOL_RESPONSE_GENERATION_PROMPT,
+    FUNCTION_TOOL_RESPONSE_GENERATION_PROMPT,
 )
 
 # Import all test cases from test_cases_new
@@ -43,23 +34,23 @@ from test_cases_new.eval_api_tool_4 import run_test as api_test_4
 from test_cases_new.eval_api_tool_5 import run_test as api_test_5
 
 
-def run_experiment_3():
-    """Run experiment 3 with unified prompt for all tool types."""
+def run_experiment_1():
+    """Run experiment 1 (baseline) with default prompts for all tool types."""
     print("=" * 80)
-    print("EXPERIMENT 3: Unified Prompt for All Tool Types (PROPOSED SOLUTION)")
+    print("EXPERIMENT 1 (BASELINE): Default Prompts for All Tool Types")
     print("=" * 80)
     print("Configuration:")
-    print("  - Prompt: UNIFIED_TOOL_RESPONSE_GENERATION_PROMPT (all types)")
+    print("  - Prompt: FUNCTION_TOOL_RESPONSE_GENERATION_PROMPT (default for all)")
     print("  - Output Schemas: Defined per-tool in test cases")
     print("  - Tool Types: Function, MCP, API")
-    print("Expectation: Simplified maintenance, may improve functions, tolerable MCP/API")
+    print("Expectation: Format mismatches for MCP/API without tailored prompts")
     print("=" * 80)
     print()
 
-    # Test configurations (experiment 3: unified prompt for all tools)
-    function_prompt = UNIFIED_TOOL_RESPONSE_GENERATION_PROMPT
-    mcp_prompt = UNIFIED_TOOL_RESPONSE_GENERATION_PROMPT
-    api_prompt = UNIFIED_TOOL_RESPONSE_GENERATION_PROMPT
+    # Test configurations (experiment 1: default prompt for all)
+    function_prompt = FUNCTION_TOOL_RESPONSE_GENERATION_PROMPT
+    mcp_prompt = FUNCTION_TOOL_RESPONSE_GENERATION_PROMPT
+    api_prompt = FUNCTION_TOOL_RESPONSE_GENERATION_PROMPT
     
     # List of all test functions
     test_cases = [
@@ -92,7 +83,7 @@ def run_experiment_3():
         print(f"{'='*80}\n")
         
         try:
-            # Run test case with experiment 3 configuration
+            # Run test case with experiment 1 configuration
             result = test_func(function_prompt, mcp_prompt, api_prompt)
             
             print(f"\n✓ {test_name} completed successfully")
@@ -111,7 +102,7 @@ def run_experiment_3():
     
     # Print summary
     print("\n" + "=" * 80)
-    print("EXPERIMENT 3 RESULTS (UNIFIED PROMPT)")
+    print("EXPERIMENT 1 (BASELINE) RESULTS")
     print("=" * 80)
     print(f"\nTotal test cases: {len(test_cases)}")
     print(f"Successfully completed: {successful}")
@@ -133,4 +124,4 @@ def run_experiment_3():
 
 
 if __name__ == "__main__":
-    run_experiment_3()
+    run_experiment_1()

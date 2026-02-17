@@ -1,28 +1,23 @@
 """
-Experiment 3: Unified Prompt for All Tool Types (Proposed Solution)
+Experiment 2: MCP/API-Specific Prompts (Proposed Solution)
 
-This experiment uses a single unified prompt (UNIFIED_TOOL_RESPONSE_GENERATION_PROMPT)
-that handles Function, MCP, and API tools with comprehensive validation rules and
-format guidance for all tool types.
+This experiment uses tailored prompts (MCP_TOOL_RESPONSE_GENERATION_PROMPT,
+API_TOOL_RESPONSE_GENERATION_PROMPT) that guide the LLM to generate responses
+in the correct format for each tool type. Output schemas are defined per-tool
+in the test cases via the mandatory output_schema parameter.
 
 Expected Behavior:
-- Uses unified prompt with tool-type-specific guidance sections
+- Uses MCP/API-specific prompts with format guidance
 - Output schemas are defined per-tool in test cases
-- May improve function tool responses with enhanced validation rules
-- Could slightly reduce MCP/API performance vs dedicated prompts (Exp 2) but should be tolerable
-- Simplifies maintenance with single prompt template
-
-Trade-off Analysis:
-- Pro: Single prompt easier to maintain and update
-- Pro: May improve function tools with better validation guidance
-- Con: May be slightly less optimized for MCP/API vs dedicated prompts
-- Goal: Find acceptable middle ground that improves overall quality
-
-Note: Requires updated tool_simulator.py to support custom prompts and MCP/API types.
+- Should achieve highest accuracy for MCP/API tools
+- Prompts guide LLM to understand response format requirements
+- This is the PROPOSED solution for production use
 """
 
 from strands_evals.simulation.prompt_templates.tool_response_generation import (
-    UNIFIED_TOOL_RESPONSE_GENERATION_PROMPT,
+    FUNCTION_TOOL_RESPONSE_GENERATION_PROMPT,
+    MCP_TOOL_RESPONSE_GENERATION_PROMPT,
+    API_TOOL_RESPONSE_GENERATION_PROMPT,
 )
 
 # Import all test cases from test_cases_new
@@ -43,23 +38,23 @@ from test_cases_new.eval_api_tool_4 import run_test as api_test_4
 from test_cases_new.eval_api_tool_5 import run_test as api_test_5
 
 
-def run_experiment_3():
-    """Run experiment 3 with unified prompt for all tool types."""
+def run_experiment_2():
+    """Run experiment 2 with tailored prompts for each tool type."""
     print("=" * 80)
-    print("EXPERIMENT 3: Unified Prompt for All Tool Types (PROPOSED SOLUTION)")
+    print("EXPERIMENT 2: MCP/API-Specific Prompts (PROPOSED SOLUTION)")
     print("=" * 80)
     print("Configuration:")
-    print("  - Prompt: UNIFIED_TOOL_RESPONSE_GENERATION_PROMPT (all types)")
+    print("  - Prompts: MCP/API-specific prompts with format guidance")
     print("  - Output Schemas: Defined per-tool in test cases")
     print("  - Tool Types: Function, MCP, API")
-    print("Expectation: Simplified maintenance, may improve functions, tolerable MCP/API")
+    print("Expectation: Highest accuracy - prompts guide format, schemas validate")
     print("=" * 80)
     print()
 
-    # Test configurations (experiment 3: unified prompt for all tools)
-    function_prompt = UNIFIED_TOOL_RESPONSE_GENERATION_PROMPT
-    mcp_prompt = UNIFIED_TOOL_RESPONSE_GENERATION_PROMPT
-    api_prompt = UNIFIED_TOOL_RESPONSE_GENERATION_PROMPT
+    # Test configurations (experiment 2: tailored prompts for each type)
+    function_prompt = FUNCTION_TOOL_RESPONSE_GENERATION_PROMPT
+    mcp_prompt = MCP_TOOL_RESPONSE_GENERATION_PROMPT
+    api_prompt = API_TOOL_RESPONSE_GENERATION_PROMPT
     
     # List of all test functions
     test_cases = [
@@ -92,7 +87,7 @@ def run_experiment_3():
         print(f"{'='*80}\n")
         
         try:
-            # Run test case with experiment 3 configuration
+            # Run test case with experiment 2 configuration
             result = test_func(function_prompt, mcp_prompt, api_prompt)
             
             print(f"\n✓ {test_name} completed successfully")
@@ -111,7 +106,7 @@ def run_experiment_3():
     
     # Print summary
     print("\n" + "=" * 80)
-    print("EXPERIMENT 3 RESULTS (UNIFIED PROMPT)")
+    print("EXPERIMENT 2 (PROPOSED SOLUTION) RESULTS")
     print("=" * 80)
     print(f"\nTotal test cases: {len(test_cases)}")
     print(f"Successfully completed: {successful}")
@@ -133,4 +128,4 @@ def run_experiment_3():
 
 
 if __name__ == "__main__":
-    run_experiment_3()
+    run_experiment_2()

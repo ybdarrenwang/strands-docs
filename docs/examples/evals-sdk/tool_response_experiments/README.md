@@ -4,139 +4,101 @@ This directory contains experiments comparing different approaches to tool respo
 
 ## Overview
 
-The experiments compare tool response generation across four configurations:
+The experiments compare tool response generation across three configurations:
 
-1. **Baseline**: Current implementation with function tools only
-2. **Experiment 1**: Add MCP/API base models for validation (default prompts)
-3. **Experiment 2**: Add MCP/API base models + tailored prompts (PROPOSED)
-4. **Experiment 3**: Unified prompt for all tool types (STRETCH)
+1. **Experiment 1 (Baseline)**: Default prompts for all tool types
+2. **Experiment 2 (Proposed)**: MCP/API-specific prompts for each tool type
+3. **Experiment 3 (Proposed)**: Unified prompt for all tool types
 
 ## Architecture
 
-The experiment framework has been simplified:
+The experiment framework uses:
 
-- **Test Cases** (`test_cases/`): Individual test case scripts that accept command-line arguments
-- **Driver Scripts**: Experiment scripts that run all test cases with specific configurations
-- **No Intermediate Layers**: Removed `TestCaseConfig`, `test_case_runner.py`, and `run_all_test_cases.py`
+- **Test Cases** (`test_cases_new/`): Individual test modules with `run_test()` functions
+- **Driver Scripts**: Experiment scripts that import and run all test cases with specific prompt configurations
+- **Embedded Schemas**: Each test case defines its own output schema via the `output_schema` parameter in the tool decorator
 
-### Test Case Arguments
+### Test Case Structure
 
-Each test case accepts the following command-line arguments:
+Each test case module exports a `run_test()` function that accepts three prompt parameters:
 
-```bash
---function-prompt {function|unified}   # Prompt for function tools (default: function)
---mcp-prompt {mcp|unified}             # Prompt for MCP tools (default: mcp)
---api-prompt {api|unified}             # Prompt for API tools (default: api)
---use-mcp-schema                       # Enable MCPToolResponse validation
---use-api-schema                       # Enable APIToolResponse validation
+```python
+def run_test(function_prompt: str, mcp_prompt: str, api_prompt: str) -> dict:
+    """
+    Run the test with the specified prompt templates.
+    
+    Args:
+        function_prompt: Prompt template for function tools
+        mcp_prompt: Prompt template for MCP tools  
+        api_prompt: Prompt template for API tools
+        
+    Returns:
+        dict: Test results with name, score, test_pass, reason
+    """
 ```
 
-**Examples**:
-```bash
-# Baseline configuration (all defaults)
-python eval_tool_simulator_01.py
-
-# Experiment 1 configuration (schemas only)
-python eval_tool_simulator_01.py --use-mcp-schema --use-api-schema
-
-# Experiment 2 configuration (specific prompts + schemas)
-python eval_tool_simulator_01.py --function-prompt function --mcp-prompt mcp --api-prompt api --use-mcp-schema --use-api-schema
-
-# Experiment 3 configuration (unified prompt + schemas)
-python eval_tool_simulator_01.py --function-prompt unified --mcp-prompt unified --api-prompt unified --use-mcp-schema --use-api-schema
-```
+**Key Changes**:
+- Output schemas are now defined within each test case using the `@tool_simulator.tool(output_schema=MySchema)` decorator
+- No need to pass `MCPToolResponse` or `APIToolResponse` as parameters
+- Simpler API with only prompt parameters
 
 ## Prerequisites
 
 Before running the experiments:
 
 1. Ensure `strands-evals` is installed with `pip install -e .`
-2. Verify test cases in `test_cases/` directory are accessible
-3. **Note**: Experiments 1-3 require updates to `tool_simulator.py` to support:
-   - Custom prompt templates via `tool_prompt` parameter
-   - MCP and API tool types with decorators
-   - Structured output models for validation
+2. Verify test cases in `test_cases_new/` directory are accessible
+3. **Important**: The ToolSimulator now requires:
+   - Mandatory `output_schema` parameter in the `@tool_simulator.tool()` decorator
+   - Custom prompt templates passed to ToolSimulator constructor
+   - Support for function, MCP, and API tool types
 
 ## Experiment Details
 
-### Baseline: Current Implementation
+### Experiment 1: Default Prompts (Baseline)
 
-**File**: `baseline_experiment.py`
-
-**Configuration**:
-- Prompt: `FUNCTION_TOOL_RESPONSE_GENERATION_PROMPT` (default)
-- Base Model: None (arbitrary LLM)
-- Tool Types: Function only
-
-**Test Case Arguments**: None (uses all defaults)
-
-**Expected Behavior**:
-- Works for function tools only
-- No structured output validation
-- Higher chance of schema violations without validation
-- Users can use any LLM but may get erroneous results
-
-**Run Command**:
-```bash
-python baseline_experiment.py
-```
-
----
-
-### Experiment 1: MCP/API Base Models
-
-**File**: `experiment_1_base_models.py`
+**File**: `experiment_1_baseline_prompt.py`
 
 **Configuration**:
-- Prompt: Default prompts (not MCP/API-specific)
-- Base Models: `MCPToolResponse`, `APIToolResponse` for validation
+- Prompts: `FUNCTION_TOOL_RESPONSE_GENERATION_PROMPT` for all tool types
+- Output Schemas: Defined per-tool in test cases
 - Tool Types: Function, MCP, API
 
-**Test Case Arguments**:
-```bash
---function-prompt function --mcp-prompt mcp --api-prompt api --use-mcp-schema --use-api-schema
-```
-
 **Expected Behavior**:
-- Validation catches schema violations through structured output
-- Without tailored prompts, LLM may generate incorrect formats initially
-- Higher retry rate or validation failures expected
-- Improvement over baseline but suboptimal
+- Function tools work well with default prompt
+- MCP/API tools may have format mismatches without tailored guidance
+- Output schemas validate structure but prompts don't guide format
+- Establishes baseline for comparison
 
 **Run Command**:
 ```bash
-python experiment_1_base_models.py
+python experiment_1_baseline_prompt.py
 ```
 
 ---
 
-### Experiment 2: MCP/API Base Models + Tailored Prompts (PROPOSED)
+### Experiment 2: MCP/API-Specific Prompts (PROPOSED)
 
-**File**: `experiment_2_base_models_prompts.py`
+**File**: `experiment_2_api_mcp_prompt.py`
 
 **Configuration**:
 - Prompts: Tool-type-specific prompts
-  - `FUNCTION_TOOL_RESPONSE_GENERATION_PROMPT`
-  - `MCP_TOOL_RESPONSE_GENERATION_PROMPT`
-  - `API_TOOL_RESPONSE_GENERATION_PROMPT`
-- Base Models: `MCPToolResponse`, `APIToolResponse` for validation
+  - `FUNCTION_TOOL_RESPONSE_GENERATION_PROMPT` for function tools
+  - `MCP_TOOL_RESPONSE_GENERATION_PROMPT` for MCP tools
+  - `API_TOOL_RESPONSE_GENERATION_PROMPT` for API tools
+- Output Schemas: Defined per-tool in test cases
 - Tool Types: Function, MCP, API
-
-**Test Case Arguments**:
-```bash
---function-prompt function --mcp-prompt mcp --api-prompt api --use-mcp-schema --use-api-schema
-```
 
 **Expected Behavior**:
 - **Highest accuracy expected**
-- Prompts guide LLM to generate correct format from the start
-- Structured output models validate schema compliance
+- Tailored prompts guide LLM to generate correct format for each tool type
+- Output schemas validate structure
 - Optimal combination of guidance + validation
 - **This is the PROPOSED production solution**
 
 **Run Command**:
 ```bash
-python experiment_2_base_models_prompts.py
+python experiment_2_api_mcp_prompt.py
 ```
 
 ---
@@ -146,14 +108,9 @@ python experiment_2_base_models_prompts.py
 **File**: `experiment_3_unified_prompt.py`
 
 **Configuration**:
-- Prompt: `UNIFIED_TOOL_RESPONSE_GENERATION_PROMPT` (all tool types)
-- Base Models: `MCPToolResponse`, `APIToolResponse` for validation
+- Prompts: `UNIFIED_TOOL_RESPONSE_GENERATION_PROMPT` for all tool types
+- Output Schemas: Defined per-tool in test cases
 - Tool Types: Function, MCP, API
-
-**Test Case Arguments**:
-```bash
---function-prompt unified --mcp-prompt unified --api-prompt unified --use-mcp-schema --use-api-schema
-```
 
 **Expected Behavior**:
 - Single prompt simplifies maintenance
@@ -175,43 +132,21 @@ python experiment_3_unified_prompt.py
 
 ---
 
-## Running All Experiments
+## Running Experiments
 
 To run all experiments sequentially:
 
 ```bash
 cd strands-docs/docs/examples/evals-sdk/tool_response_experiments/
 
-# Baseline
-python baseline_experiment.py > results_baseline.txt 2>&1
-
-# Experiment 1
-python experiment_1_base_models.py > results_exp1.txt 2>&1
+# Experiment 1 (Baseline)
+python experiment_1_baseline_prompt.py > results_exp1.txt 2>&1
 
 # Experiment 2 (Proposed)
-python experiment_2_base_models_prompts.py > results_exp2.txt 2>&1
+python experiment_2_api_mcp_prompt.py > results_exp2.txt 2>&1
 
-# Experiment 3 (Stretch)
+# Experiment 3 (Proposed)
 python experiment_3_unified_prompt.py > results_exp3.txt 2>&1
-```
-
-## Running Individual Test Cases
-
-You can also run individual test cases with custom configurations:
-
-```bash
-cd test_cases/
-
-# Run a single test case with baseline configuration
-python eval_tool_simulator_01.py
-
-# Run with custom configuration
-python eval_tool_simulator_01.py --function-prompt unified --use-mcp-schema --use-api-schema
-
-# Run multiple test cases with the same configuration
-for test in eval_tool_simulator_*.py; do
-    python "$test" --function-prompt function --mcp-prompt mcp --api-prompt api --use-mcp-schema --use-api-schema
-done
 ```
 
 ## Evaluation Metrics
@@ -229,18 +164,34 @@ Compare results across experiments to identify:
 
 ## Test Cases
 
-The `test_cases/` directory contains 15 test scenarios:
+The `test_cases_new/` directory contains 15 test scenarios organized by tool type:
 
-- `eval_tool_simulator_01.py` - Morning coffee scheduling with calendar integration
-- `eval_tool_simulator_02.py` - Commute lighting control with traffic data
-- `eval_tool_simulator_03.py` - [Additional test scenarios...]
-- ... (15 test cases total)
+**Function Tools** (5 tests):
+- `eval_function_tool_1.py` - Calendar events (1 input, simple)
+- `eval_function_tool_2.py` - Room environment (1 input, multiple outputs)
+- `eval_function_tool_3.py` - Account balance (multiple parameters, conditional logic)
+- `eval_function_tool_4.py` - Mortgage details (multiple optional parameters)
+- `eval_function_tool_5.py` - Order status (advanced filtering, complex queries)
+
+**MCP Tools** (5 tests):
+- `eval_mcp_tool_1.py` - HVAC control (1 input, simple)
+- `eval_mcp_tool_2.py` - Lighting control (2 inputs, basic)
+- `eval_mcp_tool_3.py` - Mortgage payment (multiple inputs, conditional)
+- `eval_mcp_tool_4.py` - Order cancellation (multiple actions, dependencies)
+- `eval_mcp_tool_5.py` - TV control (multi-mode, complex state)
+
+**API Tools** (5 tests):
+- `eval_api_tool_1.py` - Weather service (1 input, simple)
+- `eval_api_tool_2.py` - Transaction history (2 inputs, time range)
+- `eval_api_tool_3.py` - Employee info (access control)
+- `eval_api_tool_4.py` - Payroll info (detailed breakdowns, multiple flags)
+- `eval_api_tool_5.py` - Translation service (context-aware, multiple modes)
 
 Each test case:
-- Defines simulated tools (function, MCP, API)
-- Creates agent with sub-agent architecture
-- Tests tool interaction and state management
-- Evaluates response quality
+- Defines output schema using Pydantic BaseModel
+- Creates simulated tools with `@tool_simulator.tool(output_schema=MySchema)`
+- Tests tool interaction and response generation
+- Returns evaluation metrics
 
 ## Implementation Requirements
 
@@ -249,30 +200,33 @@ Each test case:
 ✅ **Completed**:
 - Prompt templates in `strands-evals/src/strands_evals/simulation/prompt_templates/tool_response_generation.py`
 - Tool types defined in `strands-evals/src/strands_evals/types/simulation/tool.py`
-- Test cases accept command-line arguments
-- Driver scripts simplified to use subprocess
+- ToolSimulator updated to require mandatory `output_schema` parameter
+- Test cases define output schemas per-tool
+- Driver scripts import and run tests with prompt configurations
 
-⚠️ **Requires Implementation**:
+### Key Architecture Features
 
-The current `tool_simulator.py` needs updates to support:
-
-1. **Custom Prompt Templates**:
+1. **Mandatory Output Schema**:
    ```python
    @tool_simulator.tool(
-       tool_prompt=CUSTOM_PROMPT  # Specify prompt per tool
+       output_schema=MyOutputSchema,  # Required first parameter
+       share_state_id="my_state"      # Optional parameters follow
    )
+   def my_tool(arg1: str) -> Dict[str, Any]:
+       pass
    ```
 
-2. **Tool Type Detection**: Update simulation logic to:
-   - Detect tool type (function/mcp/api) from decorator parameters
-   - Use appropriate prompt template based on tool type
-   - Pass correct parameters to prompt (e.g., `mcp_payload`, `api_payload`)
+2. **Per-Tool Schema Definition**: Each test case defines its own schema
+   - Function tools: Simple BaseModel schemas
+   - MCP tools: Schemas extending MCPToolResponse
+   - API tools: Schemas extending APIToolResponse
 
-3. **Structured Output**: Support `output_schema` parameter for validation
+3. **Prompt Configuration**: ToolSimulator accepts prompt templates in constructor
    ```python
-   @tool_simulator.tool(
-       output_schema=MCPToolResponse,  # Validate against schema
-       tool_prompt=MCP_TOOL_RESPONSE_GENERATION_PROMPT
+   tool_simulator = ToolSimulator(
+       function_tool_prompt=FUNCTION_TOOL_RESPONSE_GENERATION_PROMPT,
+       mcp_tool_prompt=MCP_TOOL_RESPONSE_GENERATION_PROMPT,
+       api_tool_prompt=API_TOOL_RESPONSE_GENERATION_PROMPT
    )
    ```
 
@@ -280,40 +234,39 @@ The current `tool_simulator.py` needs updates to support:
 
 ### Success Criteria
 
-**Baseline**:
-- Establishes performance floor
-- Function tools work reasonably well
-
-**Experiment 1**:
-- Some improvement through validation
-- May show format errors caught by schema validation
+**Experiment 1 (Baseline)**:
+- Establishes performance baseline
+- Function tools work well
+- MCP/API tools may show format issues
 
 **Experiment 2 (PROPOSED)**:
 - **Target**: Highest accuracy across all tool types
-- Minimal schema violations
-- Clear guidance + validation = optimal results
+- Minimal format mismatches
+- Tailored prompts + schemas = optimal results
+- **Goal for production**
 
 **Experiment 3 (STRETCH)**:
 - Performance between Exp 1 and Exp 2
 - Acceptable for production if close to Exp 2
-- Provides maintenance benefits
+- Single prompt provides maintenance benefits
 
 ### Hypothesis Validation
 
 The experiments test these hypotheses:
 
-1. ✅ Structured output models reduce schema violations
+1. ✅ Output schemas enforce structure and validation
 2. ✅ Tailored prompts improve response format correctness
-3. ✅ Combination of prompts + models yields best results
+3. ✅ Combination of tailored prompts + schemas yields best results
 4. ❓ Unified prompt acceptable trade-off vs. specialized prompts
 
 ## Next Steps
 
-1. **Run Baseline**: Verify current implementation works
-2. **Run Experiments**: Execute all four experiment scripts
-3. **Analyze Results**: Compare metrics across experiments
-4. **Document Findings**: Record which approach performs best
-5. **Production Decision**: Choose between Experiment 2 (optimal) or Experiment 3 (unified)
+1. **Run Experiment 1**: Establish baseline with default prompts
+2. **Run Experiment 2**: Test proposed solution with tailored prompts
+3. **Run Experiment 3**: Evaluate unified prompt alternative
+4. **Analyze Results**: Compare metrics across experiments
+5. **Document Findings**: Record which approach performs best
+6. **Production Decision**: Choose between Experiment 2 (optimal) or Experiment 3 (unified)
 
 ## Notes
 
@@ -327,6 +280,7 @@ The experiments test these hypotheses:
 
 If experiments fail to run:
 1. Check that `strands-evals` is installed with `pip install -e .`
-2. Verify test cases are in `test_cases/` directory
-3. Ensure all prompts are accessible in `prompt_templates/tool_response_generation.py`
-4. Check Python path includes necessary modules
+2. Verify test cases are in `test_cases_new/` directory
+3. Ensure all prompts are defined in `prompt_templates/tool_response_generation.py`
+4. Verify ToolSimulator has been updated with mandatory `output_schema` parameter
+5. Check Python path includes necessary modules
