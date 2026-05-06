@@ -22,9 +22,17 @@ from strands_evals.chaos import (
     ChaosExperiment,
     ChaosPlugin,
     ChaosScenario,
+    ChaosScenarioAggregator,
+    display_chaos_aggregation,
 )
-from strands_evals.evaluators import OutputEvaluator
+from strands_evals.evaluators import GoalSuccessRateEvaluator
+from strands_evals.mappers import StrandsInMemorySessionMapper
 from strands_evals.simulation.tool_simulator import ToolSimulator
+from strands_evals.telemetry import StrandsEvalsTelemetry
+
+# Setup telemetry for session tracing (required by GoalSuccessRateEvaluator)
+telemetry = StrandsEvalsTelemetry().setup_in_memory_exporter()
+memory_exporter = telemetry.in_memory_exporter
 
 
 # ─── 1. Set up ToolSimulator and register tools ──────────────────────────
@@ -108,11 +116,15 @@ def travel_agent_task(case: Case) -> dict:
         ],
         plugins=[chaos_plugin],
         callback_handler=None,
+        trace_attributes={"gen_ai.conversation.id": case.session_id, "session.id": case.session_id},
     )
 
     try:
         result = agent(case.input)
-        return {"output": str(result)}
+        finished_spans = memory_exporter.get_finished_spans()
+        mapper = StrandsInMemorySessionMapper()
+        session = mapper.map_to_session(finished_spans, session_id=case.session_id)
+        return {"output": str(result), "trajectory": session}
     except Exception as e:
         # If the agent fails entirely, capture the error as output
         return {"output": f"Agent failed with error: {type(e).__name__}: {str(e)}"}
@@ -131,14 +143,7 @@ test_cases = [
 # ─── 6. Create and run the ChaosExperiment ───────────────────────────────
 
 evaluators = [
-    OutputEvaluator(
-        rubric=(
-            "The agent should handle tool failures gracefully. "
-            "Score 1.0 if the agent acknowledges the failure and provides a helpful response. "
-            "Score 0.5 if the agent partially handles the failure. "
-            "Score 0.0 if the agent crashes, hallucinates results, or ignores the failure."
-        )
-    ),
+    GoalSuccessRateEvaluator(),
 ]
 
 experiment = ChaosExperiment(
@@ -152,10 +157,25 @@ experiment = ChaosExperiment(
 # Run: (1 baseline + 3 scenarios) × 1 case = 4 evaluations
 reports = experiment.run_evaluations(task=travel_agent_task)
 
-# Display results
-for report in reports:
-    print(f"\n{'='*60}")
-    print(f"Evaluator: {report.evaluator_name}")
-    print(f"Overall Score: {report.overall_score:.2f}")
-    print(f"{'='*60}")
-    report.run_display()
+# Display per-scenario results
+#for report in reports:
+#    print(f"\n{'='*60}")
+#    print(f"Evaluator: {report.evaluator_name}")
+#    print(f"Overall Score: {report.overall_score:.2f}")
+#    print(f"{'='*60}")
+#    report.run_display()
+
+
+# ─── 7. Aggregate and display chaos scenario report ──────────────────────
+
+aggregator = ChaosScenarioAggregator(
+    known_tools=["search_flights", "search_hotels"],
+    model="us.anthropic.claude-sonnet-4-20250514-v1:0",  # enables LLM-as-a-Judge summarization
+)
+aggregations = aggregator.aggregate(reports)
+
+# Traditional mode: interactive table with expand/collapse
+display_chaos_aggregation(aggregations, reports=reports, mode="traditional")
+
+# Pretty mode: side-by-side panels (Stats | Coverage Matrix | Reason)
+display_chaos_aggregation(aggregations, mode="pretty")
