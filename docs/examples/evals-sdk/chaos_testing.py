@@ -1,15 +1,17 @@
-"""Chaos Testing Example.
+"""Chaos Testing Example — Travel Agent.
 
 Demonstrates how to use the chaos testing module to evaluate agent resilience
 under tool failures and response corruption scenarios.
 
 This example:
-1. Sets up a ToolSimulator with simulated tools
+1. Sets up a ToolSimulator with 3 travel tools (search, book, confirm)
 2. Creates a ChaosPlugin to inject deterministic faults
-3. Defines explicit chaos scenarios (no probabilistic execution)
-4. Runs a ChaosExperiment that evaluates the agent across all scenarios + baseline
+3. Defines 10 chaos scenarios (1 tool × 1 effect each)
+4. Runs a ChaosExperiment with single-turn evaluation
+5. Aggregates and displays results in both traditional and pretty modes
 """
 
+import logging
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -17,18 +19,20 @@ from pydantic import BaseModel, Field
 from strands import Agent
 from strands_evals import Case
 from strands_evals.chaos import (
-    ToolChaosEffect,
-    ChaosEffectConfig,
     ChaosExperiment,
     ChaosPlugin,
     ChaosScenario,
     ChaosScenarioAggregator,
+    ToolChaosEffect,
     display_chaos_aggregation,
 )
 from strands_evals.evaluators import GoalSuccessRateEvaluator
 from strands_evals.mappers import StrandsInMemorySessionMapper
 from strands_evals.simulation.tool_simulator import ToolSimulator
 from strands_evals.telemetry import StrandsEvalsTelemetry
+
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+logger = logging.getLogger(__name__)
 
 # Setup telemetry for session tracing (required by GoalSuccessRateEvaluator)
 telemetry = StrandsEvalsTelemetry().setup_in_memory_exporter()
@@ -48,12 +52,21 @@ class FlightSearchResponse(BaseModel):
     status: str = Field(default="success", description="Operation status")
 
 
-class HotelSearchResponse(BaseModel):
-    """Response from the hotel search tool."""
+class BookFlightResponse(BaseModel):
+    """Response from the flight booking tool."""
 
-    hotels: list[dict[str, Any]] = Field(default_factory=list, description="List of available hotels")
-    total_results: int = Field(default=0, description="Total number of results found")
-    status: str = Field(default="success", description="Operation status")
+    booking_id: str = Field(default="", description="Booking confirmation ID")
+    flight_id: str = Field(default="", description="The booked flight ID")
+    status: str = Field(default="success", description="Booking status")
+    message: str = Field(default="", description="Status message")
+
+
+class BookingConfirmationResponse(BaseModel):
+    """Response from the booking confirmation tool."""
+
+    confirmation_sent: bool = Field(default=False, description="Whether confirmation was sent")
+    method: str = Field(default="email", description="Delivery method")
+    message: str = Field(default="", description="Confirmation details")
 
 
 @tool_simulator.tool(output_schema=FlightSearchResponse)
@@ -62,9 +75,15 @@ def search_flights(origin: str, destination: str, date: str) -> dict[str, Any]:
     pass
 
 
-@tool_simulator.tool(output_schema=HotelSearchResponse)
-def search_hotels(city: str, check_in: str, check_out: str) -> dict[str, Any]:
-    """Search for available hotels in a city for given dates."""
+@tool_simulator.tool(output_schema=BookFlightResponse)
+def book_flight(flight_id: str) -> dict[str, Any]:
+    """Book a specific flight by its flight ID. Returns booking confirmation."""
+    pass
+
+
+@tool_simulator.tool(output_schema=BookingConfirmationResponse)
+def send_booking_confirmation(booking_id: str = "", flight_id: str = "", method: str = "email") -> dict[str, Any]:
+    """Send booking confirmation or fallback link to the user via email or SMS."""
     pass
 
 
@@ -73,109 +92,112 @@ def search_hotels(city: str, check_in: str, check_out: str) -> dict[str, Any]:
 chaos_plugin = ChaosPlugin()
 
 
-# ─── 3. Define chaos scenarios ────────────────────────────────────────────
-# Each scenario is explicit and deterministic. What you see is what runs.
+# ─── 3. Define chaos scenarios (10 scenarios, 1 tool × 1 effect each) ────
 
 scenarios = [
-    # Scenario 1: Flight search times out
-    ChaosScenario(
-        name="flight_search_timeout",
-        tool_effects={"search_flights": ToolChaosEffect.TIMEOUT},
-    ),
-    # Scenario 2: Hotel search returns a network error
-    ChaosScenario(
-        name="hotel_search_network_error",
-        tool_effects={"search_hotels": ToolChaosEffect.NETWORK_ERROR},
-    ),
-    # Scenario 3: Both tools fail simultaneously
-    ChaosScenario(
-        name="both_tools_down",
-        tool_effects={
-            "search_flights": ToolChaosEffect.TIMEOUT,
-            "search_hotels": ToolChaosEffect.NETWORK_ERROR,
-        },
-    ),
+    ChaosScenario(name="book_timeout", tool_effects={"book_flight": ToolChaosEffect.TIMEOUT}),
+    ChaosScenario(name="book_corrupt_values", tool_effects={"book_flight": ToolChaosEffect.CORRUPT_VALUES}),
+    ChaosScenario(name="search_network_error", tool_effects={"search_flights": ToolChaosEffect.NETWORK_ERROR}),
+    ChaosScenario(name="search_truncate_fields", tool_effects={"search_flights": ToolChaosEffect.TRUNCATE_FIELDS}),
+    ChaosScenario(name="confirm_remove_fields", tool_effects={"send_booking_confirmation": ToolChaosEffect.REMOVE_FIELDS}),
 ]
 
 
-# ─── 4. Define the task function ─────────────────────────────────────────
+# ─── 4. Define the task function ───────────────────────────
+
+# Pre-create tool instances once (avoids registry issues across runs)
+_search_tool = tool_simulator.get_tool("search_flights")
+_book_tool = tool_simulator.get_tool("book_flight")
+_confirm_tool = tool_simulator.get_tool("send_booking_confirmation")
+
 
 def travel_agent_task(case: Case) -> dict:
-    """Run the travel agent with simulated tools and chaos plugin."""
-    # Create agent with simulated tools and chaos plugin attached.
+    """Run the travel agent with a single user query."""
+    # Log which case/scenario is running
+    scenario = (case.metadata or {}).get("chaos_scenario", "unknown")
+    logger.info(f"\n{'─'*60}")
+    logger.info(f"  Case: {case.name}  |  Scenario: {scenario}")
+    logger.info(f"  User: {case.input}")
+
     agent = Agent(
         system_prompt=(
-            "You are a travel planning assistant. Use the available tools to help "
-            "users find flights and hotels. If a tool fails or returns an error, "
-            "inform the user gracefully and suggest alternatives. "
-            "Do NOT retry a tool that has already failed."
+            "You are a travel booking assistant. You help users search for flights, "
+            "book them, and send confirmations. Use the available tools to complete "
+            "the user's request. Today's date is May 18, 2025.\n\n"
+            "Always use the tools directly — do not ask the user for clarification "
+            "if you can infer reasonable values from context.\n\n"
+            "If a tool fails or returns an error:\n"
+            "- Acknowledge the failure honestly to the user\n"
+            "- Try an alternative approach if possible\n"
+            "- Do NOT hallucinate successful results\n"
+            "- Do NOT retry more than once\n\n"
+            "If tool results look suspicious (e.g., $0 fares, past dates):\n"
+            "- Inform the user that results seem unreliable\n"
+            "- Suggest alternatives"
         ),
-        tools=[
-            tool_simulator.get_tool("search_flights"),
-            tool_simulator.get_tool("search_hotels"),
-        ],
+        tools=[_search_tool, _book_tool, _confirm_tool],
         plugins=[chaos_plugin],
         callback_handler=None,
         trace_attributes={"gen_ai.conversation.id": case.session_id, "session.id": case.session_id},
     )
 
+    memory_exporter.clear()
     try:
         result = agent(case.input)
-        finished_spans = memory_exporter.get_finished_spans()
-        mapper = StrandsInMemorySessionMapper()
-        session = mapper.map_to_session(finished_spans, session_id=case.session_id)
-        return {"output": str(result), "trajectory": session}
+        output = str(result)
     except Exception as e:
-        # If the agent fails entirely, capture the error as output
-        return {"output": f"Agent failed with error: {type(e).__name__}: {str(e)}"}
+        output = f"Agent failed with error: {type(e).__name__}: {str(e)[:200]}"
+
+    logger.info(f"  Agent: {output[:300]}{'...' if len(output) > 300 else ''}")
+    logger.info(f"{'─'*60}")
+
+    finished_spans = memory_exporter.get_finished_spans()
+    mapper = StrandsInMemorySessionMapper()
+    session = mapper.map_to_session(finished_spans, session_id=case.session_id)
+
+    return {"output": output, "trajectory": session}
 
 
 # ─── 5. Define test cases ────────────────────────────────────────────────
 
 test_cases = [
     Case(
-        name="book_trip",
-        input="I need to book a flight from Seattle to Tokyo on March 15 and find a hotel for 3 nights.",
+        name="book_a_flight",
+        input="Find me a flight from SFO to JFK on May 20, book the cheapest one, and send me a confirmation.",
+    ),
+    Case(
+        name="search_and_confirm",
+        input="Search for flights from Seattle to Tokyo next Tuesday, book one, and email me the confirmation.",
     ),
 ]
 
 
 # ─── 6. Create and run the ChaosExperiment ───────────────────────────────
 
-evaluators = [
-    GoalSuccessRateEvaluator(),
-]
+evaluators = [GoalSuccessRateEvaluator()]
 
 experiment = ChaosExperiment(
     chaos_plugin=chaos_plugin,
     chaos_scenarios=scenarios,
     cases=test_cases,
     evaluators=evaluators,
-    include_baseline=True,  # Run once without chaos for comparison
+    include_baseline=True,
 )
 
-# Run: (1 baseline + 3 scenarios) × 1 case = 4 evaluations
+# Run: (1 baseline + 5 scenarios) × 2 cases = 12 evaluations
 reports = experiment.run_evaluations(task=travel_agent_task)
-
-# Display per-scenario results
-#for report in reports:
-#    print(f"\n{'='*60}")
-#    print(f"Evaluator: {report.evaluator_name}")
-#    print(f"Overall Score: {report.overall_score:.2f}")
-#    print(f"{'='*60}")
-#    report.run_display()
 
 
 # ─── 7. Aggregate and display chaos scenario report ──────────────────────
 
 aggregator = ChaosScenarioAggregator(
-    known_tools=["search_flights", "search_hotels"],
-    model="us.anthropic.claude-sonnet-4-20250514-v1:0",  # enables LLM-as-a-Judge summarization
+    known_tools=["search_flights", "book_flight", "send_booking_confirmation"],
+    model="us.anthropic.claude-sonnet-4-20250514-v1:0",
 )
 aggregations = aggregator.aggregate(reports)
 
 # Traditional mode: interactive table with expand/collapse
 display_chaos_aggregation(aggregations, reports=reports, mode="traditional")
 
-# Pretty mode: side-by-side panels (Stats | Coverage Matrix | Reason)
+# Pretty mode: Stats + Summary on top, Coverage Matrix on bottom
 display_chaos_aggregation(aggregations, mode="pretty")
