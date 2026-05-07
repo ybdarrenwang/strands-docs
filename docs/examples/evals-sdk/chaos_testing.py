@@ -23,8 +23,10 @@ from strands_evals.chaos import (
     ChaosPlugin,
     ChaosScenario,
     ChaosScenarioAggregator,
+    FailureCommunicationEvaluator,
+    PartialCompletionEvaluator,
+    RecoveryStrategyEvaluator,
     ToolChaosEffect,
-    display_chaos_aggregation,
 )
 from strands_evals.evaluators import GoalSuccessRateEvaluator
 from strands_evals.mappers import StrandsInMemorySessionMapper
@@ -174,7 +176,12 @@ test_cases = [
 
 # ─── 6. Create and run the ChaosExperiment ───────────────────────────────
 
-evaluators = [GoalSuccessRateEvaluator()]
+evaluators = [
+    GoalSuccessRateEvaluator(),
+    RecoveryStrategyEvaluator(),
+    PartialCompletionEvaluator(),
+    FailureCommunicationEvaluator(),
+]
 
 experiment = ChaosExperiment(
     chaos_plugin=chaos_plugin,
@@ -182,6 +189,7 @@ experiment = ChaosExperiment(
     cases=test_cases,
     evaluators=evaluators,
     include_baseline=True,
+    aggregator=ChaosScenarioAggregator(),
 )
 
 # Run: (1 baseline + 5 scenarios) × 2 cases = 12 evaluations
@@ -190,14 +198,6 @@ reports = experiment.run_evaluations(task=travel_agent_task)
 
 # ─── 7. Aggregate and display chaos scenario report ──────────────────────
 
-aggregator = ChaosScenarioAggregator(
-    known_tools=["search_flights", "book_flight", "send_booking_confirmation"],
-    model="us.anthropic.claude-sonnet-4-20250514-v1:0",
-)
-aggregations = aggregator.aggregate(reports)
-
-# Traditional mode: interactive table with expand/collapse
-display_chaos_aggregation(aggregations, reports=reports, mode="traditional")
-
-# Pretty mode: Stats + Summary on top, Coverage Matrix on bottom
-display_chaos_aggregation(aggregations, mode="pretty")
+aggregation_report = experiment.aggregate_evaluations()
+aggregation_report.run_display()
+aggregation_report.to_file("chaos_aggregation_report.json")
