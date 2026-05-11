@@ -6,9 +6,9 @@ under tool failures and response corruption scenarios.
 This example:
 1. Sets up a ToolSimulator with 3 travel tools (search, book, confirm)
 2. Creates a ChaosPlugin to inject deterministic faults
-3. Defines 10 chaos scenarios (1 tool × 1 effect each)
+3. Defines chaos scenarios (1 tool × 1 effect each)
 4. Runs a ChaosExperiment with single-turn evaluation
-5. Aggregates and displays results in both traditional and pretty modes
+5. Aggregates and displays results
 """
 
 import logging
@@ -23,10 +23,13 @@ from strands_evals.chaos import (
     ChaosPlugin,
     ChaosScenario,
     ChaosScenarioAggregator,
+    CorruptValues,
     FailureCommunicationEvaluator,
     PartialCompletionEvaluator,
     RecoveryStrategyEvaluator,
-    ToolChaosEffect,
+    RemoveFields,
+    ToolCallFailure,
+    TruncateFields,
 )
 from strands_evals.evaluators import GoalSuccessRateEvaluator
 from strands_evals.mappers import StrandsInMemorySessionMapper
@@ -94,18 +97,51 @@ def send_booking_confirmation(booking_id: str = "", flight_id: str = "", method:
 chaos_plugin = ChaosPlugin()
 
 
-# ─── 3. Define chaos scenarios (10 scenarios, 1 tool × 1 effect each) ────
+# ─── 3. Define chaos scenarios ───────────────────────────────────────────
 
 scenarios = [
-    ChaosScenario(name="book_timeout", tool_effects={"book_flight": ToolChaosEffect.TIMEOUT}),
-    ChaosScenario(name="book_corrupt_values", tool_effects={"book_flight": ToolChaosEffect.CORRUPT_VALUES}),
-    ChaosScenario(name="search_network_error", tool_effects={"search_flights": ToolChaosEffect.NETWORK_ERROR}),
-    ChaosScenario(name="search_truncate_fields", tool_effects={"search_flights": ToolChaosEffect.TRUNCATE_FIELDS}),
-    ChaosScenario(name="confirm_remove_fields", tool_effects={"send_booking_confirmation": ToolChaosEffect.REMOVE_FIELDS}),
+    # Single-tool failures (1 tool affected)
+    ChaosScenario(
+        name="search_timeout",
+        description="Search tool times out (pre-hook error)",
+        effects={"search_flights": [ToolCallFailure(error_type="timeout")]},
+    ),
+    ChaosScenario(
+        name="book_corrupt",
+        description="Booking tool returns corrupted data (post-hook corruption)",
+        effects={"book_flight": [CorruptValues(corrupt_ratio=0.8)]},
+    ),
+    # Two-tool failures (2 tools affected simultaneously)
+    ChaosScenario(
+        name="search_down_and_confirm_truncated",
+        description="Search fails with network error while confirmation is truncated",
+        effects={
+            "search_flights": [ToolCallFailure(error_type="network_error")],
+            "send_booking_confirmation": [TruncateFields(max_length=5)],
+        },
+    ),
+    ChaosScenario(
+        name="book_timeout_and_confirm_removed",
+        description="Booking times out while confirmation loses fields",
+        effects={
+            "book_flight": [ToolCallFailure(error_type="timeout")],
+            "send_booking_confirmation": [RemoveFields(remove_ratio=0.5)],
+        },
+    ),
+    # All-tool failure (3 tools affected simultaneously)
+    ChaosScenario(
+        name="total_chaos",
+        description="All tools fail: search network error, book corrupt, confirm removed",
+        effects={
+            "search_flights": [ToolCallFailure(error_type="network_error")],
+            "book_flight": [CorruptValues(corrupt_ratio=0.8)],
+            "send_booking_confirmation": [RemoveFields(remove_ratio=0.7)],
+        },
+    ),
 ]
 
 
-# ─── 4. Define the task function ───────────────────────────
+# ─── 4. Define the task function ─────────────────────────────────────────
 
 # Pre-create tool instances once (avoids registry issues across runs)
 _search_tool = tool_simulator.get_tool("search_flights")
@@ -115,10 +151,8 @@ _confirm_tool = tool_simulator.get_tool("send_booking_confirmation")
 
 def travel_agent_task(case: Case) -> dict:
     """Run the travel agent with a single user query."""
-    # Log which case/scenario is running
-    scenario = (case.metadata or {}).get("chaos_scenario", "unknown")
     logger.info(f"\n{'─'*60}")
-    logger.info(f"  Case: {case.name}  |  Scenario: {scenario}")
+    logger.info(f"  Case: {case.name}")
     logger.info(f"  User: {case.input}")
 
     agent = Agent(
@@ -184,15 +218,14 @@ evaluators = [
 ]
 
 experiment = ChaosExperiment(
-    chaos_plugin=chaos_plugin,
-    chaos_scenarios=scenarios,
     cases=test_cases,
+    scenarios=scenarios,
     evaluators=evaluators,
     include_baseline=True,
-    aggregator=ChaosScenarioAggregator(),
+    aggregator=ChaosScenarioAggregator(model="us.anthropic.claude-sonnet-4-20250514-v1:0"),
 )
 
-# Run: (1 baseline + 5 scenarios) × 2 cases = 12 evaluations
+# Run: (1 baseline + 5 scenarios) × 2 cases = 12 runs
 reports = experiment.run_evaluations(task=travel_agent_task)
 
 
