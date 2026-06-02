@@ -4,12 +4,13 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from strands import Agent
-from strands_evals.chaos import ChaosCase, ChaosExperiment, ChaosPlugin, Timeout
+from strands_evals.chaos import ChaosCase, ChaosExperiment, ChaosPlugin, TruncateFields
 from strands_evals.chaos.effects import NetworkError
-from strands_evals.chaos.evaluators import FailureCommunicationEvaluator
+from strands_evals.evaluators.chaos import PartialCompletionEvaluator
 from strands_evals.mappers import StrandsInMemorySessionMapper
 from strands_evals.simulation.tool_simulator import ToolSimulator
 from strands_evals.telemetry import StrandsEvalsTelemetry
+from strands_evals.types.evaluation_report import EvaluationReport
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
@@ -33,6 +34,12 @@ class BookFlightResponse(BaseModel):
     message: str = Field(default="")
 
 
+class BookingConfirmationResponse(BaseModel):
+    confirmation_sent: bool = Field(default=False)
+    method: str = Field(default="email")
+    message: str = Field(default="")
+
+
 @tool_simulator.tool(output_schema=FlightSearchResponse)
 def search_flights(origin: str, destination: str, date: str) -> dict[str, Any]:
     """Search for available flights between two cities on a given date."""
@@ -45,24 +52,34 @@ def book_flight(flight_id: str) -> dict[str, Any]:
     pass
 
 
+@tool_simulator.tool(output_schema=BookingConfirmationResponse)
+def send_booking_confirmation(booking_id: str = "", flight_id: str = "", method: str = "email") -> dict[str, Any]:
+    """Send booking confirmation to the user via email or SMS."""
+    pass
+
+
 chaos_plugin = ChaosPlugin()
 
-# Two cases that test communication quality:
-# 1. Search times out — agent must inform user about the failure
-# 2. Both tools fail — agent must communicate multiple failures clearly
+# Two cases that test partial completion:
+# 1. Search works (truncated) but booking fails — user gets degraded flight info but no reservation
+# 2. Search and booking work but confirmation fails — user gets most of what they asked for
 chaos_cases = [
     ChaosCase(
-        name="search_timeout",
-        input="Find me a flight from SFO to JFK on May 20 and book the cheapest one.",
-        effects={"tool_effects": {"search_flights": [Timeout(error_message="Tool call timed out after 30s")]}},
-    ),
-    ChaosCase(
-        name="all_tools_down",
-        input="Search for flights from Seattle to Tokyo next Tuesday and book one.",
+        name="search_degraded_booking_fails",
+        input="Find me a flight from SFO to JFK on May 20, book the cheapest one, and send me a confirmation.",
         effects={
             "tool_effects": {
-                "search_flights": [NetworkError(error_message="DNS resolution failed")],
-                "book_flight": [NetworkError(error_message="Connection refused")],
+                "search_flights": [TruncateFields(max_length=5)],
+                "book_flight": [NetworkError(error_message="Connection reset by peer")],
+            },
+        },
+    ),
+    ChaosCase(
+        name="confirmation_fails",
+        input="Search for flights from Seattle to Tokyo next Tuesday, book one, and email me the confirmation.",
+        effects={
+            "tool_effects": {
+                "send_booking_confirmation": [NetworkError(error_message="SMTP server unreachable")],
             },
         },
     ),
@@ -70,6 +87,7 @@ chaos_cases = [
 
 _search_tool = tool_simulator.get_tool("search_flights")
 _book_tool = tool_simulator.get_tool("book_flight")
+_confirm_tool = tool_simulator.get_tool("send_booking_confirmation")
 
 
 def travel_agent_task(case: ChaosCase) -> dict:
@@ -83,12 +101,12 @@ def travel_agent_task(case: ChaosCase) -> dict:
             "You are a travel booking assistant. Use the available tools to complete "
             "the user's request. Today's date is May 18, 2025.\n\n"
             "If a tool fails or returns an error:\n"
-            "- Acknowledge the failure honestly to the user\n"
-            "- Explain what went wrong in plain language\n"
-            "- Suggest next steps (retry later, try alternative)\n"
-            "- Do NOT hallucinate successful results"
+            "- Acknowledge the failure honestly\n"
+            "- Complete as much of the request as possible\n"
+            "- Do NOT hallucinate successful results\n"
+            "- Do NOT retry more than once"
         ),
-        tools=[_search_tool, _book_tool],
+        tools=[_search_tool, _book_tool, _confirm_tool],
         plugins=[chaos_plugin],
         callback_handler=None,
         trace_attributes={"gen_ai.conversation.id": case.session_id, "session.id": case.session_id},
@@ -113,8 +131,8 @@ def travel_agent_task(case: ChaosCase) -> dict:
 
 experiment = ChaosExperiment(
     cases=chaos_cases,
-    evaluators=[FailureCommunicationEvaluator()],
+    evaluators=[PartialCompletionEvaluator()],
 )
 
 reports = experiment.run_evaluations(task=travel_agent_task)
-reports[0].run_display()
+EvaluationReport.flatten(reports).run_display()

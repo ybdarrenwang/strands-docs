@@ -20,6 +20,7 @@ from strands_evals.evaluators import GoalSuccessRateEvaluator
 from strands_evals.mappers import StrandsInMemorySessionMapper
 from strands_evals.simulation.tool_simulator import ToolSimulator
 from strands_evals.telemetry import StrandsEvalsTelemetry
+from strands_evals.types.evaluation_report import EvaluationReport
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
@@ -169,4 +170,4 @@ experiment = ChaosExperiment(
 
 # Run: 8 chaos cases = 8 agent invocations
 reports = experiment.run_evaluations(task=travel_agent_task)
-reports[0].run_display()
+EvaluationReport.flatten(reports).run_display()
